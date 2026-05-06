@@ -14,17 +14,19 @@ from telegram.ext import (
     MessageHandler,
 )
 
-from bot.keyboards import admin_game_controls_keyboard, game_announcement_keyboard
+from bot.keyboards import admin_game_controls_keyboard, game_announcement_keyboard, payment_board_keyboard
 from bot.messages import (
     format_game_announcement,
     format_group_payment_summary,
     format_debt_summary,
+    format_payment_board,
 )
 from bot.utils import ensure_user
-from core.commands import CreateGameCmd, JoinGameCmd, LeaveGameCmd
+from core.commands import CreateGameCmd, JoinGameCmd, LeaveGameCmd, UploadScreenshotCmd
 from core.services.game import GameService
 from core.services.player import PlayerService
 from core.services.debt import DebtService
+from core.services.payment import PaymentService
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -250,13 +252,61 @@ async def cmd_trigger_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
             card_number=card_number,
         )
     )
-    if result.success:
-        amount = result.data
-        await update.message.reply_text(
-            f"Payment phase started. Amount per player: {amount}\nCard: {card_number}"
-        )
-    else:
+    if not result.success:
         await update.message.reply_text(f"Error: {result.error_message}")
+        return
+    amount = result.data
+    async with UnitOfWork() as uow:
+        game = await uow.games.get_by_uuid(game_uuid)
+        participants = await uow.participants.list_for_game(game.id)
+    text = format_payment_board(game, participants, amount_per_player=amount, card_number=card_number)
+    keyboard = payment_board_keyboard(game_uuid)
+    sent = await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+    async with UnitOfWork() as uow:
+        db_game = await uow.games.get_by_uuid(game_uuid)
+        if db_game:
+            db_game.payment_board_message_id = sent.message_id
+    try:
+        await context.bot.unpin_chat_message(chat_id=game.group_chat_id, message_id=game.announcement_message_id)
+    except Exception as exc:
+        logger.debug("Could not unpin announcement: %s", exc)
+    try:
+        await context.bot.pin_chat_message(chat_id=game.group_chat_id, message_id=sent.message_id)
+    except Exception as exc:
+        logger.debug("Could not pin payment board: %s", exc)
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.message.photo or not update.effective_user:
+        return
+    participant_id = context.chat_data.get("awaiting_cheque_for_participant_id") if context.chat_data else None
+    if not participant_id:
+        return
+    file_id = update.message.photo[-1].file_id
+    payment_svc: PaymentService = context.bot_data["payment_service"]
+    async with UnitOfWork() as uow:
+        user = await uow.users.get_by_telegram_id(update.effective_user.id)
+    if not user:
+        return
+    result = await payment_svc.upload_screenshot(
+        UploadScreenshotCmd(participant_id=participant_id, user_id=user.id, file_id=file_id)
+    )
+    if not result.success:
+        await update.message.reply_text(f"Error: {result.error_message}")
+        return
+    # Refresh board and show admin confirm button
+    from bot.handlers.callbacks import _refresh_payment_board
+    from bot.keyboards import admin_single_confirm_keyboard
+    async with UnitOfWork() as uow:
+        participant = await uow.participants.get_by_id(participant_id)
+        game = await uow.games.get_by_id(participant.game_id) if participant else None
+    if participant and game:
+        await update.message.reply_text(
+            "Thanks! Confirmation in process ✅",
+            reply_markup=admin_single_confirm_keyboard(participant.id),
+        )
+        await _refresh_payment_board(context, game.game_uuid)
+    context.chat_data.pop("awaiting_cheque_for_participant_id", None)
 
 
 group_handlers = [
@@ -266,4 +316,5 @@ group_handlers = [
     CommandHandler("cancel", cmd_cancel_game, filters=filters.ChatType.GROUPS),
     CommandHandler("debt", cmd_debt, filters=filters.ChatType.GROUPS),
     CommandHandler("pay", cmd_trigger_payment, filters=filters.ChatType.GROUPS),
+    MessageHandler(filters.PHOTO & filters.ChatType.GROUPS, handle_photo),
 ]

@@ -137,7 +137,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         UploadScreenshotCmd(participant_id=participant_id, user_id=user.id, file_id=file_id)
     )
     if result.success:
-        await update.message.reply_text("Screenshot received. Admin will review.")
+        # Also refresh payment board if possible
+        from bot.handlers.callbacks import _refresh_payment_board
+        from bot.keyboards import admin_single_confirm_keyboard
+        async with UnitOfWork() as uow:
+            participant = await uow.participants.get_by_id(participant_id)
+            game = await uow.games.get_by_id(participant.game_id) if participant else None
+        if participant and game:
+            await update.message.reply_text(
+                "Thanks! Confirmation in process ✅",
+                reply_markup=admin_single_confirm_keyboard(participant.id),
+            )
+            await _refresh_payment_board(context, game.game_uuid)
     else:
         await update.message.reply_text(f"Error: {result.error_message}")
     context.user_data.pop("awaiting_screenshot_for_participant_id", None)

@@ -6,8 +6,8 @@ from typing import Any
 from telegram import Update
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
-from bot.keyboards import admin_confirm_keyboard, dm_payment_keyboard
-from bot.messages import format_group_payment_summary, format_dm_payment_prompt
+from bot.keyboards import admin_confirm_keyboard, dm_payment_keyboard, payment_board_keyboard
+from bot.messages import format_group_payment_summary, format_dm_payment_prompt, format_payment_board
 from bot.utils import ensure_user
 from core.commands import (
     ConfirmPaymentCmd,
@@ -15,11 +15,13 @@ from core.commands import (
     LeaveGameCmd,
     PlayerPaidCmd,
     TriggerPaymentCmd,
+    UploadScreenshotCmd,
 )
 from core.services.game import GameService
 from core.services.player import PlayerService
 from core.services.payment import PaymentService
 from core.services.notification import NotificationService
+from core.services.debt import DebtService
 from db.unit_of_work import UnitOfWork
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,10 @@ async def route_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _handle_trigger_payment(query, context, user.id, value)
     elif action == "close_game":
         await _handle_close_game(query, context, user.id, value)
+    elif action == "board_paid":
+        await _handle_board_paid(query, context, user.id, value)
+    elif action == "admin_confirm":
+        await _handle_admin_confirm(query, context, user.id, int(value))
     else:
         logger.warning("Unknown callback action: %s", action)
 
@@ -88,18 +94,18 @@ async def _handle_paid(query: Any, context: ContextTypes.DEFAULT_TYPE, telegram_
         # DM admin
         async with UnitOfWork() as uow:
             participant = await uow.participants.get_by_id(participant_id)
-            if participant and participant.user:
-                game = await uow.games.get_by_id(participant.game_id)
-                if game:
-                    await context.bot.send_message(
-                        chat_id=game.created_by,
-                        text=f"Player {participant.user.first_name or participant.user.username} marked payment as pending for game {game.game_uuid}.",
-                    )
-                    await context.bot.send_message(
-                        chat_id=game.created_by,
-                        text="Tap to confirm or reject:",
-                        reply_markup=admin_confirm_keyboard(participant_id),
-                    )
+                if participant and participant.user:
+                    game = await uow.games.get_by_id(participant.game_id)
+                    if game:
+                        await context.bot.send_message(
+                            chat_id=game.admin_id,
+                            text=f"Player {participant.user.first_name or participant.user.username} marked payment as pending for game {game.game_uuid}.",
+                        )
+                        await context.bot.send_message(
+                            chat_id=game.admin_id,
+                            text="Tap to confirm or reject:",
+                            reply_markup=admin_confirm_keyboard(participant_id),
+                        )
     else:
         await query.answer(result.error_message or "Error", show_alert=True)
 
@@ -152,28 +158,100 @@ async def _handle_trigger_payment(query: Any, context: ContextTypes.DEFAULT_TYPE
         return
     payment_svc: PaymentService = context.bot_data["payment_service"]
     # Card number is hardcoded here for simplicity; ideally ask via conversation.
+    card_number = "1234-5678-9012-3456"
     result = await payment_svc.trigger(
-        TriggerPaymentCmd(game_uuid=game_uuid, admin_id=admin_telegram_id, card_number="1234-5678-9012-3456")
+        TriggerPaymentCmd(game_uuid=game_uuid, admin_id=admin_telegram_id, card_number=card_number)
     )
-    if result.success:
-        amount = result.data
-        async with UnitOfWork() as uow:
-            game = await uow.games.get_by_uuid(game_uuid)
-            participants = await uow.participants.list_for_game(game.id)
-        text = format_group_payment_summary(game, participants)
-        await query.edit_message_text(text, parse_mode="Markdown")
-        # DM each participant
-        for p in participants:
-            user = getattr(p, "user", None)
-            if user and user.chat_id:
-                await context.bot.send_message(
-                    chat_id=user.chat_id,
-                    text=format_dm_payment_prompt(game, amount),
-                    reply_markup=dm_payment_keyboard(p.id),
-                    parse_mode="Markdown",
-                )
-    else:
+    if not result.success:
         await query.answer(result.error_message or "Error", show_alert=True)
+        return
+    amount = result.data
+    async with UnitOfWork() as uow:
+        game = await uow.games.get_by_uuid(game_uuid)
+        participants = await uow.participants.list_for_game(game.id)
+    # Post payment board in the group
+    text = format_payment_board(game, participants, amount_per_player=amount, card_number=card_number)
+    keyboard = payment_board_keyboard(game_uuid)
+    sent = await context.bot.send_message(
+        chat_id=game.group_chat_id,
+        text=text,
+        reply_markup=keyboard,
+        parse_mode="Markdown",
+    )
+    # Store payment board message id and pin it
+    async with UnitOfWork() as uow:
+        db_game = await uow.games.get_by_uuid(game_uuid)
+        if db_game:
+            db_game.payment_board_message_id = sent.message_id
+    try:
+        await context.bot.unpin_chat_message(chat_id=game.group_chat_id, message_id=game.announcement_message_id)
+    except Exception as exc:
+        logger.debug("Could not unpin announcement: %s", exc)
+    try:
+        await context.bot.pin_chat_message(chat_id=game.group_chat_id, message_id=sent.message_id)
+    except Exception as exc:
+        logger.debug("Could not pin payment board: %s", exc)
+    # Update old trigger message to summary (optional)
+    summary_text = format_group_payment_summary(game, participants)
+    try:
+        await query.edit_message_text(summary_text, parse_mode="Markdown")
+    except Exception as exc:
+        logger.debug("Could not edit trigger message: %s", exc)
+
+
+async def _handle_board_paid(query: Any, context: ContextTypes.DEFAULT_TYPE, telegram_id: int, game_uuid: str) -> None:
+    async with UnitOfWork() as uow:
+        db_user = await uow.users.get_by_telegram_id(telegram_id)
+        if db_user is None:
+            await query.answer("You are not in this game", show_alert=True)
+            return
+        game = await uow.games.get_by_uuid(game_uuid)
+        if game is None:
+            await query.answer("Game not found.", show_alert=True)
+            return
+        participant = await uow.participants.get(game.id, db_user.id)
+    if participant is None:
+        await query.answer("You are not in this game", show_alert=True)
+        return
+    if participant.payment_status in ("pending_confirmation", "paid"):
+        await query.answer("Already marked", show_alert=True)
+        return
+    payment_svc: PaymentService = context.bot_data["payment_service"]
+    result = await payment_svc.player_paid(PlayerPaidCmd(participant_id=participant.id, user_id=telegram_id))
+    if not result.success:
+        await query.answer(result.error_message or "Error", show_alert=True)
+        return
+    # Store expectation for screenshot (group-scoped)
+    context.chat_data = context.chat_data or {}
+    context.chat_data["awaiting_cheque_for_participant_id"] = participant.id
+    await query.answer("Please send your payment screenshot in a reply to this message.")
+    await context.bot.send_message(
+        chat_id=game.group_chat_id,
+        text=f"📎 @{db_user.username or db_user.first_name or 'Player'}, send the cheque please",
+        reply_to_message_id=query.message.message_id if query.message else None,
+    )
+    await _refresh_payment_board(context, game_uuid)
+
+
+async def _handle_admin_confirm(query: Any, context: ContextTypes.DEFAULT_TYPE, telegram_id: int, participant_id: int) -> None:
+    from config import config
+    if not config.is_admin(telegram_id):
+        await query.answer("This button only works for admins.", show_alert=True)
+        return
+    payment_svc: PaymentService = context.bot_data["payment_service"]
+    result = await payment_svc.confirm(
+        ConfirmPaymentCmd(participant_id=participant_id, admin_id=telegram_id, approved=True)
+    )
+    if not result.success:
+        await query.answer(result.error_message or "Error", show_alert=True)
+        return
+    await query.answer("Payment confirmed ✅")
+    async with UnitOfWork() as uow:
+        participant = await uow.participants.get_by_id(participant_id)
+        if participant:
+            game = await uow.games.get_by_id(participant.game_id)
+            if game and game.game_uuid:
+                await _refresh_payment_board(context, game.game_uuid)
 
 
 async def _handle_close_game(query: Any, context: ContextTypes.DEFAULT_TYPE, admin_telegram_id: int, game_uuid: str) -> None:
@@ -231,6 +309,31 @@ async def _refresh_payment_summary(query: Any, context: ContextTypes.DEFAULT_TYP
             )
     except Exception as exc:
         logger.debug("Could not edit payment summary: %s", exc)
+
+
+async def _refresh_payment_board(context: ContextTypes.DEFAULT_TYPE, game_uuid: str) -> None:
+    async with UnitOfWork() as uow:
+        game = await uow.games.get_by_uuid(game_uuid)
+        if not game or not game.payment_board_message_id:
+            return
+        participants = await uow.participants.list_for_game(game.id)
+    amount = game.cost_per_player or (game.total_cost / len(participants)) if participants else None
+    text = format_payment_board(
+        game,
+        participants,
+        amount_per_player=amount,
+        card_number="1234-5678-9012-3456",
+    )
+    try:
+        await context.bot.edit_message_text(
+            chat_id=game.group_chat_id,
+            message_id=game.payment_board_message_id,
+            text=text,
+            reply_markup=payment_board_keyboard(game_uuid),
+            parse_mode="Markdown",
+        )
+    except Exception as exc:
+        logger.debug("Could not edit payment board: %s", exc)
 
 
 callback_router = CallbackQueryHandler(route_callback)
