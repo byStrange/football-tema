@@ -352,9 +352,14 @@ async def cmd_trigger_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
     async with UnitOfWork() as uow:
         game = await uow.games.get_by_uuid(game_uuid)
         participants = await uow.participants.list_for_game(game.id)
-    text = format_payment_board(game, participants, amount_per_player=amount, card_number=card_number)
-    keyboard = payment_board_keyboard(game_uuid)
-    sent = await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+    try:
+        text = format_payment_board(game, participants, amount_per_player=amount, card_number=card_number)
+        keyboard = payment_board_keyboard(game_uuid)
+        sent = await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+    except Exception as exc:
+        logger.exception("Failed to post payment board: %s", exc)
+        await update.message.reply_text(f"Error posting payment board: {exc}")
+        return
     async with UnitOfWork() as uow:
         db_game = await uow.games.get_by_uuid(game_uuid)
         if db_game:
@@ -367,6 +372,7 @@ async def cmd_trigger_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
         await context.bot.pin_chat_message(chat_id=game.group_chat_id, message_id=sent.message_id)
     except Exception as exc:
         logger.debug("Could not pin payment board: %s", exc)
+    await update.message.reply_text("Payment phase started ✅")
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
