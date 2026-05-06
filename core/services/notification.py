@@ -43,7 +43,7 @@ class NotificationService:
             game = await uow.games.get_by_uuid(event.game_uuid)
             if game is None:
                 return
-            user = await uow.users.get_by_telegram_id(event.user_id)
+            user = await uow.users.get_by_id(event.user_id)
         first_name = getattr(user, "first_name", None) or ""
         username = getattr(user, "username", None)
         if username:
@@ -60,7 +60,7 @@ class NotificationService:
             game = await uow.games.get_by_uuid(event.game_uuid)
             if game is None:
                 return
-            user = await uow.users.get_by_telegram_id(event.user_id)
+            user = await uow.users.get_by_id(event.user_id)
         first_name = getattr(user, "first_name", None) or ""
         username = getattr(user, "username", None)
         if username:
@@ -73,20 +73,32 @@ class NotificationService:
     async def on_payment_initiated(self, event: PaymentInitiated) -> None:
         if not self._message_sender:
             return
-        text = f"Payment {event.amount} initiated by user {event.user_id}."
-        await self._message_sender.send_message(event.user_id, text)
+        async with UnitOfWork() as uow:
+            user = await uow.users.get_by_id(event.user_id)
+        if not user:
+            return
+        text = f"Payment {event.amount} initiated. Please send the screenshot."
+        await self._message_sender.send_message(user.chat_id or user.telegram_id, text)
 
     async def on_payment_confirmed(self, event: PaymentConfirmed) -> None:
         if not self._message_sender:
             return
+        async with UnitOfWork() as uow:
+            user = await uow.users.get_by_id(event.user_id)
+        if not user:
+            return
         text = f"Your payment of {event.amount} was confirmed."
-        await self._message_sender.send_message(event.user_id, text)
+        await self._message_sender.send_message(user.chat_id or user.telegram_id, text)
 
     async def on_payment_rejected(self, event: PaymentRejected) -> None:
         if not self._message_sender:
             return
+        async with UnitOfWork() as uow:
+            user = await uow.users.get_by_id(event.user_id)
+        if not user:
+            return
         text = f"Your payment was rejected. Reason: {event.reason or 'None given'}."
-        await self._message_sender.send_message(event.user_id, text)
+        await self._message_sender.send_message(user.chat_id or user.telegram_id, text)
 
     async def on_game_payment_opened(self, event: GamePaymentOpened) -> None:
         if not self._message_sender:
