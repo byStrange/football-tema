@@ -119,13 +119,20 @@ async def cmd_pay(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.message.photo or not update.effective_user:
+    if not update.message or not update.effective_user:
         return
-    participant_id = context.user_data.get("awaiting_screenshot_for_participant_id")
+    participant_id = context.user_data.get("awaiting_screenshot_for_participant_id") or context.user_data.get("awaiting_cheque_for_participant_id")
     if not participant_id:
         await update.message.reply_text("I wasn't expecting a photo. Use the Upload Screenshot button first.")
         return
-    file_id = update.message.photo[-1].file_id
+    # Handle both photo (compressed) and document (e.g., PNG from gallery)
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id
+    elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith("image/"):
+        file_id = update.message.document.file_id
+    else:
+        await update.message.reply_text("Please send an image.")
+        return
     from core.services.payment import PaymentService
     from core.commands import UploadScreenshotCmd
     payment_svc: PaymentService = context.bot_data["payment_service"]
@@ -160,4 +167,5 @@ private_handlers = [
     CommandHandler("debt", cmd_private_debt, filters=filters.ChatType.PRIVATE),
     CommandHandler("pay", cmd_pay, filters=filters.ChatType.PRIVATE),
     MessageHandler(filters.PHOTO, handle_photo),
+    MessageHandler(filters.Document.IMAGE, handle_photo),
 ]

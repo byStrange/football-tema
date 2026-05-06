@@ -118,7 +118,7 @@ async def test_payment_flow(event_bus):
 
     # Upload screenshot transitions to pending_confirmation
     from core.commands import UploadScreenshotCmd
-    ss = await payment_svc.upload_screenshot(UploadScreenshotCmd(participant_id=pid, user_id=100, file_id="fake_file_id"))
+    ss = await payment_svc.upload_screenshot(UploadScreenshotCmd(participant_id=pid, user_id=p1.id, file_id="fake_file_id"))
     assert ss.success is True
 
     async with UnitOfWork() as uow:

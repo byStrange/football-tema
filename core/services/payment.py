@@ -89,8 +89,7 @@ class PaymentService:
             participant = await uow.participants.get_by_id(cmd.participant_id)
             if participant is None:
                 return CommandResult.fail("PARTICIPANT_NOT_FOUND", "Participant not found.")
-            user = await uow.users.get_by_telegram_id(cmd.user_id)
-            if user is None or participant.user_id != user.id:
+            if participant.user_id != cmd.user_id:
                 return CommandResult.fail("NOT_AUTHORIZED", "Cannot upload screenshot for another user.")
 
             participant.screenshot_file_id = cmd.file_id

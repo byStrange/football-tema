@@ -335,12 +335,18 @@ async def cmd_trigger_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.message.photo or not update.effective_user:
+    if not update.message or not update.effective_user:
         return
     participant_id = context.chat_data.get("awaiting_cheque_for_participant_id") if context.chat_data else None
     if not participant_id:
         return
-    file_id = update.message.photo[-1].file_id
+    # Handle both photo (compressed) and document (e.g., PNG from gallery)
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id
+    elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith("image/"):
+        file_id = update.message.document.file_id
+    else:
+        return
     payment_svc: PaymentService = context.bot_data["payment_service"]
     async with UnitOfWork() as uow:
         user = await uow.users.get_by_telegram_id(update.effective_user.id)
@@ -375,4 +381,5 @@ group_handlers = [
     CommandHandler("debt", cmd_debt, filters=filters.ChatType.GROUPS),
     CommandHandler("pay", cmd_trigger_payment, filters=filters.ChatType.GROUPS),
     MessageHandler(filters.PHOTO & filters.ChatType.GROUPS, handle_photo),
+    MessageHandler(filters.Document.IMAGE & filters.ChatType.GROUPS, handle_photo),
 ]
