@@ -30,7 +30,7 @@ from config import config
 
 logger = logging.getLogger(__name__)
 
-LOCATION, DATETIME, COST_TYPE, COST, MAX_PLAYERS = range(5)
+LOCATION, DATETIME, COST, MAX_PLAYERS = range(4)
 
 
 async def _is_admin(user_id: int) -> bool:
@@ -50,7 +50,19 @@ async def cmd_newgame(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 async def newgame_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not update.message:
         return ConversationHandler.END
-    context.chat_data["newgame_location"] = update.message.text
+    loc = update.message.location
+    if loc:
+        context.chat_data["newgame_location"] = {
+            "latitude": loc.latitude,
+            "longitude": loc.longitude,
+            "text": update.message.text or "",
+        }
+    else:
+        context.chat_data["newgame_location"] = {
+            "latitude": None,
+            "longitude": None,
+            "text": update.message.text or "",
+        }
     await update.message.reply_text("When is the game? (YYYY-MM-DD HH:MM)")
     return DATETIME
 
@@ -64,20 +76,7 @@ async def newgame_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("Invalid format. Use YYYY-MM-DD HH:MM")
         return DATETIME
     context.chat_data["newgame_datetime"] = dt
-    await update.message.reply_text("Cost type: total cost or per player? (reply 'total' or 'per')")
-    return COST_TYPE
-
-
-async def newgame_cost_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not update.message or not update.message.text:
-        return ConversationHandler.END
-    text = update.message.text.strip().lower()
-    if text not in ("total", "per"):
-        await update.message.reply_text("Reply 'total' or 'per'.")
-        return COST_TYPE
-    context.chat_data["newgame_cost_type"] = text
-    prompt = "Enter the total cost:" if text == "total" else "Enter the cost per player:"
-    await update.message.reply_text(prompt)
+    await update.message.reply_text("Enter the total cost:")
     return COST
 
 
@@ -89,11 +88,7 @@ async def newgame_cost(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     except Exception:
         await update.message.reply_text("Invalid amount. Enter a number.")
         return COST
-    ct = context.chat_data.get("newgame_cost_type")
-    if ct == "total":
-        context.chat_data["newgame_total_cost"] = amount
-    else:
-        context.chat_data["newgame_cost_per_player"] = amount
+    context.chat_data["newgame_total_cost"] = amount
     await update.message.reply_text("Max players? (Send a number or 0 to skip)")
     return MAX_PLAYERS
 
@@ -108,12 +103,15 @@ async def newgame_max_players(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not update.effective_user or not update.effective_chat:
         return ConversationHandler.END
 
+    location_data = context.chat_data.get("newgame_location") or {}
+    location_text = location_data.get("text") if isinstance(location_data, dict) else str(location_data or "")
+
     cmd = CreateGameCmd(
         admin_id=update.effective_user.id,
-        location=context.chat_data.get("newgame_location", ""),
+        location=location_text,
         scheduled_at=context.chat_data.get("newgame_datetime", datetime.utcnow()),
         total_cost=context.chat_data.get("newgame_total_cost"),
-        cost_per_player=context.chat_data.get("newgame_cost_per_player"),
+        cost_per_player=None,
         max_players=max_players,
         group_chat_id=update.effective_chat.id,
     )
@@ -124,16 +122,37 @@ async def newgame_max_players(update: Update, context: ContextTypes.DEFAULT_TYPE
         return ConversationHandler.END
 
     game = result.data
-    text = format_game_announcement(game, [])
+    chat_id = update.effective_chat.id
+
+    has_pin = isinstance(location_data, dict) and location_data.get("latitude") is not None and location_data.get("longitude") is not None
+
+    # If coordinates are available, send location pin first
+    if has_pin:
+        await context.bot.send_location(
+            chat_id=chat_id,
+            latitude=location_data["latitude"],
+            longitude=location_data["longitude"],
+        )
+
+    announcement_text = format_game_announcement(game, [], has_location_pin=has_pin)
     keyboard = game_announcement_keyboard(game.game_uuid)
-    sent = await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+    sent = await context.bot.send_message(
+        chat_id=chat_id,
+        text=announcement_text,
+        reply_markup=keyboard,
+        parse_mode="Markdown",
+    )
+    announcement_message_id = sent.message_id
+
+    # Pin the announcement message
+    await context.bot.pin_chat_message(chat_id=chat_id, message_id=announcement_message_id)
 
     # Store announcement_message_id
     from db.unit_of_work import UnitOfWork
     async with UnitOfWork() as uow:
         db_game = await uow.games.get_by_uuid(game.game_uuid)
         if db_game:
-            db_game.announcement_message_id = sent.message_id
+            db_game.announcement_message_id = announcement_message_id
 
     return ConversationHandler.END
 
@@ -147,9 +166,8 @@ async def newgame_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 newgame_conversation = ConversationHandler(
     entry_points=[CommandHandler("newgame", cmd_newgame, filters=filters.ChatType.GROUPS)],
     states={
-        LOCATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, newgame_location)],
+        LOCATION: [MessageHandler((filters.TEXT | filters.LOCATION) & ~filters.COMMAND, newgame_location)],
         DATETIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, newgame_datetime)],
-        COST_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, newgame_cost_type)],
         COST: [MessageHandler(filters.TEXT & ~filters.COMMAND, newgame_cost)],
         MAX_PLAYERS: [MessageHandler(filters.TEXT & ~filters.COMMAND, newgame_max_players)],
     },

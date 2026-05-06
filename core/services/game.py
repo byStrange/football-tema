@@ -12,11 +12,9 @@ class GameService:
         self._event_bus = event_bus
 
     async def create_game(self, cmd: CreateGameCmd) -> CommandResult[Game]:
-        if (cmd.total_cost is None and cmd.cost_per_player is None) or (
-            cmd.total_cost is not None and cmd.cost_per_player is not None
-        ):
+        if cmd.total_cost is None and cmd.cost_per_player is None:
             return CommandResult.fail(
-                "INVALID_COST", "Specify exactly one of total_cost or cost_per_player."
+                "INVALID_COST", "Specify total_cost or cost_per_player."
             )
 
         async with UnitOfWork() as uow:

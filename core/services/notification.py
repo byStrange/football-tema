@@ -43,7 +43,14 @@ class NotificationService:
             game = await uow.games.get_by_uuid(event.game_uuid)
             if game is None:
                 return
-        text = f"Player {event.user_id} joined. Total participants: {event.participant_count}"
+            user = await uow.users.get_by_telegram_id(event.user_id)
+        first_name = getattr(user, "first_name", None) or ""
+        username = getattr(user, "username", None)
+        if username:
+            display = f"{first_name} (@{username})"
+        else:
+            display = first_name or f"User {event.user_id}"
+        text = f"👤 {display} joined. Total: {event.participant_count} players"
         await self._message_sender.send_message(game.group_chat_id, text)
 
     async def on_player_left(self, event: PlayerLeft) -> None:
@@ -53,7 +60,14 @@ class NotificationService:
             game = await uow.games.get_by_uuid(event.game_uuid)
             if game is None:
                 return
-        text = f"Player {event.user_id} left. Total participants: {event.participant_count}"
+            user = await uow.users.get_by_telegram_id(event.user_id)
+        first_name = getattr(user, "first_name", None) or ""
+        username = getattr(user, "username", None)
+        if username:
+            display = f"{first_name} (@{username})"
+        else:
+            display = first_name or f"User {event.user_id}"
+        text = f"👤 {display} left. Total: {event.participant_count} players"
         await self._message_sender.send_message(game.group_chat_id, text)
 
     async def on_payment_initiated(self, event: PaymentInitiated) -> None:
