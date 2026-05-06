@@ -68,6 +68,33 @@ def format_group_payment_summary(game: Any, participants: list[Any]) -> str:
     return "\n".join(lines)
 
 
+def format_payment_board(game: Any, participants: list[Any], amount_per_player: Decimal | None = None, card_number: str = "N/A") -> str:
+    lines = [
+        "💳 Payment Phase Opened",
+        "",
+        f"📍 {escape_md(game.location)}",
+        f"🗓 {escape_md(str(game.scheduled_at))}",
+    ]
+    if amount_per_player is not None:
+        lines.append(f"💰 Amount per player: *{escape_md(str(amount_per_player))}*")
+    lines.append(f"💳 Card: `{escape_md(card_number)}`")
+    lines.append("")
+    lines.append("Players:")
+    for p in participants:
+        user = getattr(p, "user", None)
+        name = escape_md(user.first_name or user.username or "Player") if user else "Player"
+        status = getattr(p, "payment_status", None)
+        if status == "paid":
+            lines.append(f"✅ {name} — Paid")
+        elif status == "pending_confirmation":
+            lines.append(f"⏳ {name} — Pending")
+        elif status == "waiting_for_cheque":
+            lines.append(f"📎 {name} — Waiting for cheque")
+        else:
+            lines.append(f"❌ {name} — Not paid")
+    return "\n".join(lines)
+
+
 def format_debt_summary(balance: Decimal) -> str:
     if balance > 0:
         return f"You currently owe *{escape_md(str(balance))}* across games."

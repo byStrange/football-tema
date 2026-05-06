@@ -55,6 +55,7 @@ class PaymentService:
                 return CommandResult.fail("PARTICIPANT_NOT_FOUND", "Participant not found.")
 
             if participant.payment_status in (
+                PaymentStatus.waiting_for_cheque,
                 PaymentStatus.pending_confirmation,
                 PaymentStatus.paid,
             ):
@@ -93,6 +94,11 @@ class PaymentService:
                 return CommandResult.fail("NOT_AUTHORIZED", "Cannot upload screenshot for another user.")
 
             participant.screenshot_file_id = cmd.file_id
+
+            if participant.payment_status == PaymentStatus.waiting_for_cheque:
+                new_status = PaymentFSM.transition(participant.payment_status, PaymentAction.initiated)
+                await uow.participants.update_status(participant.id, new_status)
+
             return CommandResult.ok(None)
 
     async def confirm(self, cmd: ConfirmPaymentCmd) -> CommandResult[None]:
