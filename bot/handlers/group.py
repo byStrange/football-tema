@@ -321,7 +321,6 @@ async def cmd_trigger_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
     group_chat_id = update.effective_chat.id if update.effective_chat else None
     if len(args) == 1:
         card_number = args[0]
-        from db.unit_of_work import UnitOfWork
         async with UnitOfWork() as uow:
             active_games = await uow.games.list_active_for_group(group_chat_id)
         if len(active_games) == 0:
@@ -337,6 +336,7 @@ async def cmd_trigger_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     from core.services.payment import PaymentService
     from core.commands import TriggerPaymentCmd
+    from db.unit_of_work import UnitOfWork
     payment_svc: PaymentService = context.bot_data["payment_service"]
     result = await payment_svc.trigger(
         TriggerPaymentCmd(
