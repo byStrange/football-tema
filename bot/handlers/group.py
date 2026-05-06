@@ -14,9 +14,10 @@ from telegram.ext import (
     MessageHandler,
 )
 
-from bot.keyboards import admin_game_controls_keyboard, game_announcement_keyboard
+from bot.keyboards import admin_game_controls_keyboard, dm_payment_keyboard, game_announcement_keyboard
 from bot.messages import (
     format_game_announcement,
+    format_dm_payment_prompt,
     format_group_payment_summary,
     format_debt_summary,
 )
@@ -203,8 +204,19 @@ async def cmd_close(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not args:
         await update.message.reply_text("Usage: /close <game_uuid>")
         return
+    game_uuid = args[0]
     game_svc: GameService = context.bot_data["game_service"]
-    result = await game_svc.close_game(args[0], update.effective_user.id)
+
+    from db.unit_of_work import UnitOfWork
+    async with UnitOfWork() as uow:
+        game = await uow.games.get_by_uuid(game_uuid)
+        if game and game.announcement_message_id:
+            try:
+                await context.bot.unpin_chat_message(chat_id=game.group_chat_id, message_id=game.announcement_message_id)
+            except Exception:
+                pass
+
+    result = await game_svc.close_game(game_uuid, update.effective_user.id)
     if result.success:
         await update.message.reply_text("Game closed.")
     else:
@@ -221,8 +233,19 @@ async def cmd_cancel_game(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not args:
         await update.message.reply_text("Usage: /cancel <game_uuid>")
         return
+    game_uuid = args[0]
     game_svc: GameService = context.bot_data["game_service"]
-    result = await game_svc.cancel_game(args[0], update.effective_user.id)
+
+    from db.unit_of_work import UnitOfWork
+    async with UnitOfWork() as uow:
+        game = await uow.games.get_by_uuid(game_uuid)
+        if game and game.announcement_message_id:
+            try:
+                await context.bot.unpin_chat_message(chat_id=game.group_chat_id, message_id=game.announcement_message_id)
+            except Exception:
+                pass
+
+    result = await game_svc.cancel_game(game_uuid, update.effective_user.id)
     if result.success:
         await update.message.reply_text("Game cancelled.")
     else:
@@ -254,10 +277,26 @@ async def cmd_trigger_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     args = context.args
     if not args:
-        await update.message.reply_text("Usage: /pay <game_uuid> <card_number>")
+        await update.message.reply_text("Usage: /pay <card_number> or /pay <game_uuid> <card_number>")
         return
-    game_uuid = args[0]
-    card_number = args[1] if len(args) > 1 else "N/A"
+
+    group_chat_id = update.effective_chat.id if update.effective_chat else None
+    if len(args) == 1:
+        card_number = args[0]
+        from db.unit_of_work import UnitOfWork
+        async with UnitOfWork() as uow:
+            active_games = await uow.games.list_active_for_group(group_chat_id)
+        if len(active_games) == 0:
+            await update.message.reply_text("No active game found in this group.")
+            return
+        if len(active_games) > 1:
+            await update.message.reply_text("Multiple active games found. Use /pay <game_uuid> <card_number>.")
+            return
+        game_uuid = active_games[0].game_uuid
+    else:
+        game_uuid = args[0]
+        card_number = args[1]
+
     from core.services.payment import PaymentService
     from core.commands import TriggerPaymentCmd
     payment_svc: PaymentService = context.bot_data["payment_service"]
@@ -270,6 +309,32 @@ async def cmd_trigger_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     if result.success:
         amount = result.data
+        async with UnitOfWork() as uow:
+            game = await uow.games.get_by_uuid(game_uuid)
+            participants = await uow.participants.list_for_game(game.id)
+        text = format_group_payment_summary(game, participants)
+        if game and game.announcement_message_id:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=game.group_chat_id,
+                    message_id=game.announcement_message_id,
+                    text=text,
+                    parse_mode="Markdown",
+                )
+            except Exception as exc:
+                logger.debug("Could not edit announcement: %s", exc)
+        for p in participants:
+            user = getattr(p, "user", None)
+            if user and user.chat_id:
+                try:
+                    await context.bot.send_message(
+                        chat_id=user.chat_id,
+                        text=format_dm_payment_prompt(game, amount),
+                        reply_markup=dm_payment_keyboard(p.id),
+                        parse_mode="Markdown",
+                    )
+                except Exception as exc:
+                    logger.debug("Could not DM participant: %s", exc)
         await update.message.reply_text(
             f"Payment phase started. Amount per player: {amount}\nCard: {card_number}"
         )
