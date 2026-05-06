@@ -68,6 +68,9 @@ def format_group_payment_summary(game: Any, participants: list[Any]) -> str:
     return "\n".join(lines)
 
 
+from db.models import PaymentStatus
+
+
 def format_payment_board(game: Any, participants: list[Any], amount_per_player: Decimal | None = None, card_number: str = "N/A") -> str:
     lines = [
         "💳 Payment Phase Opened",
@@ -84,11 +87,11 @@ def format_payment_board(game: Any, participants: list[Any], amount_per_player: 
         user = getattr(p, "user", None)
         name = escape_md(user.first_name or user.username or "Player") if user else "Player"
         status = getattr(p, "payment_status", None)
-        if status == "paid":
+        if status == PaymentStatus.paid:
             lines.append(f"✅ {name} — Paid")
-        elif status == "pending_confirmation":
+        elif status == PaymentStatus.pending_confirmation:
             lines.append(f"⏳ {name} — Pending")
-        elif status == "waiting_for_cheque":
+        elif status == PaymentStatus.waiting_for_cheque:
             lines.append(f"📎 {name} — Waiting for cheque")
         else:
             lines.append(f"❌ {name} — Not paid")
