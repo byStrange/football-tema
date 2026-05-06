@@ -415,6 +415,104 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     context.chat_data.pop("awaiting_cheque_for_participant_id", None)
 
 
+async def cmd_add_player(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin command to add a player by username to a game."""
+    if not update.message or not update.effective_user:
+        return
+    if not await _is_admin(update.effective_user.id):
+        await update.message.reply_text("Admin only.")
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("Usage: /addplayer @username [game_uuid]")
+        return
+
+    username = args[0].lstrip("@")
+    group_chat_id = update.effective_chat.id if update.effective_chat else None
+    if len(args) >= 2:
+        game_uuid = args[1]
+    else:
+        async with UnitOfWork() as uow:
+            active_games = await uow.games.list_active_for_group(group_chat_id)
+        if len(active_games) == 0:
+            await update.message.reply_text("No active game found in this group.")
+            return
+        if len(active_games) > 1:
+            await update.message.reply_text("Multiple active games. Use: /addplayer @username <game_uuid>")
+            return
+        game_uuid = active_games[0].game_uuid
+
+    player_svc: PlayerService = context.bot_data["player_service"]
+    from core.commands import AddPlayerCmd
+    result = await player_svc.add_manually(
+        AddPlayerCmd(game_uuid=game_uuid, admin_id=update.effective_user.id, target_username=username)
+    )
+    if not result.success:
+        await update.message.reply_text(f"Error: {result.error_message}")
+        return
+    await update.message.reply_text(f"Player @{username} added to game {game_uuid} ✅")
+
+
+async def cmd_mark_paid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin command to mark any player as paid instantly (bypass I Paid/screenshot)."""
+    if not update.message or not update.effective_user:
+        return
+    if not await _is_admin(update.effective_user.id):
+        await update.message.reply_text("Admin only.")
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("Usage: /markpaid @username [game_uuid]")
+        return
+
+    username = args[0].lstrip("@")
+    group_chat_id = update.effective_chat.id if update.effective_chat else None
+    if len(args) >= 2:
+        game_uuid = args[1]
+    else:
+        async with UnitOfWork() as uow:
+            active_games = await uow.games.list_active_for_group(group_chat_id)
+        if len(active_games) == 0:
+            await update.message.reply_text("No active game found in this group.")
+            return
+        if len(active_games) > 1:
+            await update.message.reply_text("Multiple active games. Use: /markpaid @username <game_uuid>")
+            return
+        game_uuid = active_games[0].game_uuid
+
+    # Resolve participant by username + game
+    async with UnitOfWork() as uow:
+        user = await uow.users.get_by_username(username)
+        if not user:
+            await update.message.reply_text(f"User @{username} not found.")
+            return
+        game = await uow.games.get_by_uuid(game_uuid)
+        if not game:
+            await update.message.reply_text("Game not found.")
+            return
+        participant = await uow.participants.get(game.id, user.id)
+        if not participant:
+            await update.message.reply_text(f"@{username} is not in this game.")
+            return
+
+    payment_svc: PaymentService = context.bot_data["payment_service"]
+    from core.commands import MarkPaidCmd
+    result = await payment_svc.mark_paid(
+        MarkPaidCmd(participant_id=participant.id, admin_id=update.effective_user.id)
+    )
+    if not result.success:
+        await update.message.reply_text(f"Error: {result.error_message}")
+        return
+    await update.message.reply_text(f"@{username} marked as paid ✅")
+    # Refresh payment board if one exists
+    from bot.handlers.callbacks import _refresh_payment_board
+    if game and getattr(game, "payment_board_message_id", None):
+        try:
+            await _refresh_payment_board(context, game.game_uuid)
+        except Exception:
+            pass
+
+
 group_handlers = [
     newgame_conversation,
     CommandHandler("games", cmd_games, filters=filters.ChatType.GROUPS),
@@ -423,6 +521,8 @@ group_handlers = [
     CommandHandler("cancel", cmd_cancel_game, filters=filters.ChatType.GROUPS),
     CommandHandler("debt", cmd_debt, filters=filters.ChatType.GROUPS),
     CommandHandler("pay", cmd_trigger_payment, filters=filters.ChatType.GROUPS),
+    CommandHandler("addplayer", cmd_add_player, filters=filters.ChatType.GROUPS),
+    CommandHandler("markpaid", cmd_mark_paid, filters=filters.ChatType.GROUPS),
     MessageHandler(filters.PHOTO & filters.ChatType.GROUPS, handle_photo),
     MessageHandler(filters.Document.IMAGE & filters.ChatType.GROUPS, handle_photo),
 ]

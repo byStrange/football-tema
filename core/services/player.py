@@ -83,9 +83,17 @@ class PlayerService:
             if admin is None or game.admin_id != admin.id:
                 return CommandResult.fail("NOT_AUTHORIZED", "Only admin can add players.")
 
-            user = await uow.users.get_by_telegram_id(cmd.target_telegram_id)
-            if user is None:
-                user = await uow.users.create(telegram_id=cmd.target_telegram_id, chat_id=0)
+            if cmd.target_telegram_id:
+                user = await uow.users.get_by_telegram_id(cmd.target_telegram_id)
+                if user is None:
+                    user = await uow.users.create(telegram_id=cmd.target_telegram_id, chat_id=0)
+            elif cmd.target_username:
+                user = await uow.users.get_by_username(cmd.target_username)
+                if user is None:
+                    # Create a placeholder user with no telegram_id (will be resolved later if they join)
+                    user = await uow.users.create(telegram_id=0, chat_id=0, username=cmd.target_username)
+            else:
+                return CommandResult.fail("MISSING_TARGET", "Provide target_telegram_id or target_username.")
 
             participant = await uow.participants.create(
                 game_id=game.id,

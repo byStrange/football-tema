@@ -18,6 +18,12 @@ class UserRepository:
         result = await self._session.scalar(select(User).where(User.id == user_id))
         return result
 
+    async def get_by_username(self, username: str) -> User | None:
+        result = await self._session.scalar(
+            select(User).where(User.username.ilike(username))
+        )
+        return result
+
     async def create(
         self,
         telegram_id: int,

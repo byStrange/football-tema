@@ -94,7 +94,8 @@ def format_payment_board(game: Any, participants: list[Any], amount_per_player: 
         elif status == PaymentStatus.waiting_for_cheque:
             lines.append(f"📎 {name} — Waiting for cheque")
         else:
-            lines.append(f"❌ {name} — Not paid")
+            suffix = " (manual)" if getattr(p, "is_manual_add", False) else ""
+            lines.append(f"❌ {name}{suffix} — Not paid")
     return "\n".join(lines)
 
 

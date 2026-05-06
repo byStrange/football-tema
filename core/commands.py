@@ -30,7 +30,8 @@ class LeaveGameCmd(BaseModel):
 class AddPlayerCmd(BaseModel):
     game_uuid: str
     admin_id: int
-    target_telegram_id: int
+    target_telegram_id: int | None = None
+    target_username: str | None = None
 
 
 class RemovePlayerCmd(BaseModel):
@@ -43,6 +44,11 @@ class TriggerPaymentCmd(BaseModel):
     game_uuid: str
     admin_id: int
     card_number: str
+
+
+class MarkPaidCmd(BaseModel):
+    participant_id: int
+    admin_id: int
 
 
 class PlayerPaidCmd(BaseModel):

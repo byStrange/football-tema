@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from core.commands import ConfirmPaymentCmd, PlayerPaidCmd, TriggerPaymentCmd, UploadScreenshotCmd
+from core.commands import ConfirmPaymentCmd, MarkPaidCmd, PlayerPaidCmd, TriggerPaymentCmd, UploadScreenshotCmd
 from core.events import EventBus, GamePaymentOpened, PaymentConfirmed, PaymentInitiated, PaymentRejected
 from core.exceptions import GameNotFound, InvalidStateTransition, NotAuthorized
 from core.results import CommandResult
@@ -158,4 +158,40 @@ class PaymentService:
                     )
                 )
 
+            return CommandResult.ok(None)
+
+    async def mark_paid(self, cmd: MarkPaidCmd) -> CommandResult[None]:
+        """Admin directly marks a participant as paid (bypasses screenshot/I Paid steps)."""
+        async with UnitOfWork() as uow:
+            participant = await uow.participants.get_by_id(cmd.participant_id)
+            if participant is None:
+                return CommandResult.fail("PARTICIPANT_NOT_FOUND", "Participant not found.")
+            admin = await uow.users.get_by_telegram_id(cmd.admin_id)
+            game = await uow.games.get_by_id(participant.game_id)
+            if admin is None or game is None or game.admin_id != admin.id:
+                return CommandResult.fail("NOT_AUTHORIZED", "Only the admin can mark payments.")
+
+            participant.payment_status = PaymentStatus.paid
+            participant.confirmed_by = cmd.admin_id
+            participant.confirmed_at = datetime.utcnow()
+
+            await uow.payments.create(
+                participant_id=participant.id,
+                user_id=participant.user_id,
+                action=PaymentAction.confirmed,
+                amount=participant.amount_due or Decimal("0"),
+            )
+
+            await self._debt_service.record_credit(
+                participant.user_id, participant.amount_due or Decimal("0"), uow=uow
+            )
+
+            await self._event_bus.publish(
+                PaymentConfirmed(
+                    game_uuid=game.game_uuid,
+                    user_id=participant.user_id,
+                    amount=participant.amount_due or Decimal("0"),
+                    admin_id=cmd.admin_id,
+                )
+            )
             return CommandResult.ok(None)
