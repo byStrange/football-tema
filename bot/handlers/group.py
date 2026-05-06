@@ -308,6 +308,10 @@ async def cmd_debt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_trigger_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Admin command to trigger payment phase."""
+    from core.services.payment import PaymentService
+    from core.commands import TriggerPaymentCmd
+    from db.unit_of_work import UnitOfWork
+
     if not update.message or not update.effective_user:
         return
     if not await _is_admin(update.effective_user.id):
@@ -334,9 +338,6 @@ async def cmd_trigger_payment(update: Update, context: ContextTypes.DEFAULT_TYPE
         game_uuid = args[0]
         card_number = args[1]
 
-    from core.services.payment import PaymentService
-    from core.commands import TriggerPaymentCmd
-    from db.unit_of_work import UnitOfWork
     payment_svc: PaymentService = context.bot_data["payment_service"]
     result = await payment_svc.trigger(
         TriggerPaymentCmd(
