@@ -150,30 +150,11 @@ async def _handle_trigger_payment(query: Any, context: ContextTypes.DEFAULT_TYPE
     if not config.is_admin(admin_telegram_id):
         await query.answer("Admin only.", show_alert=True)
         return
-    payment_svc: PaymentService = context.bot_data["payment_service"]
-    # Card number is hardcoded here for simplicity; ideally ask via conversation.
-    result = await payment_svc.trigger(
-        TriggerPaymentCmd(game_uuid=game_uuid, admin_id=admin_telegram_id, card_number="1234-5678-9012-3456")
+    await query.answer()
+    await context.bot.send_message(
+        chat_id=query.message.chat.id,
+        text=f"💳 Reply with /pay <card_number> to start payments for game {game_uuid}",
     )
-    if result.success:
-        amount = result.data
-        async with UnitOfWork() as uow:
-            game = await uow.games.get_by_uuid(game_uuid)
-            participants = await uow.participants.list_for_game(game.id)
-        text = format_group_payment_summary(game, participants)
-        await query.edit_message_text(text, parse_mode="Markdown")
-        # DM each participant
-        for p in participants:
-            user = getattr(p, "user", None)
-            if user and user.chat_id:
-                await context.bot.send_message(
-                    chat_id=user.chat_id,
-                    text=format_dm_payment_prompt(game, amount),
-                    reply_markup=dm_payment_keyboard(p.id),
-                    parse_mode="Markdown",
-                )
-    else:
-        await query.answer(result.error_message or "Error", show_alert=True)
 
 
 async def _handle_close_game(query: Any, context: ContextTypes.DEFAULT_TYPE, admin_telegram_id: int, game_uuid: str) -> None:
@@ -182,6 +163,13 @@ async def _handle_close_game(query: Any, context: ContextTypes.DEFAULT_TYPE, adm
         await query.answer("Admin only.", show_alert=True)
         return
     game_svc: GameService = context.bot_data["game_service"]
+    async with UnitOfWork() as uow:
+        game = await uow.games.get_by_uuid(game_uuid)
+        if game and game.announcement_message_id:
+            try:
+                await context.bot.unpin_chat_message(chat_id=game.group_chat_id, message_id=game.announcement_message_id)
+            except Exception:
+                pass
     result = await game_svc.close_game(game_uuid, admin_telegram_id)
     if result.success:
         await query.answer("Game closed.")
