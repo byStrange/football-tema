@@ -28,6 +28,7 @@ from core.services.game import GameService
 from core.services.player import PlayerService
 from core.services.debt import DebtService
 from core.services.payment import PaymentService
+from db.unit_of_work import UnitOfWork
 from config import config
 
 logger = logging.getLogger(__name__)

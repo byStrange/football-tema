@@ -222,7 +222,6 @@ async def _handle_board_paid(query: Any, context: ContextTypes.DEFAULT_TYPE, tel
         await query.answer(result.error_message or "Error", show_alert=True)
         return
     # Store expectation for screenshot (group-scoped)
-    context.chat_data = context.chat_data or {}
     context.chat_data["awaiting_cheque_for_participant_id"] = participant.id
     await query.answer("Please send your payment screenshot in a reply to this message.")
     await context.bot.send_message(
