@@ -30,12 +30,32 @@ def dm_payment_keyboard(participant_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def payment_board_keyboard(game_uuid: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("💰 I Paid", callback_data=f"board_paid:{game_uuid}"),
+            ]
+        ]
+    )
+
+
 def admin_confirm_keyboard(participant_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton("✅ Confirm", callback_data=f"confirm:{participant_id}"),
                 InlineKeyboardButton("❌ Reject", callback_data=f"reject:{participant_id}"),
+            ]
+        ]
+    )
+
+
+def admin_single_confirm_keyboard(participant_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Confirm", callback_data=f"admin_confirm:{participant_id}"),
             ]
         ]
     )

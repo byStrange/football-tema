@@ -34,6 +34,7 @@ class GameStatus(str, enum.Enum):
 
 class PaymentStatus(str, enum.Enum):
     not_paid = "not_paid"
+    waiting_for_cheque = "waiting_for_cheque"
     pending_confirmation = "pending_confirmation"
     paid = "paid"
 
@@ -81,6 +82,7 @@ class Game(Base):
     group_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     announcement_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     payment_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    payment_board_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     participants: Mapped[List["Participant"]] = relationship(
