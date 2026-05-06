@@ -17,6 +17,8 @@ class PlayerService:
             game = await uow.games.get_by_uuid(cmd.game_uuid)
             if game is None:
                 return CommandResult.fail("GAME_NOT_FOUND", "Game not found.")
+            if game.status in (GameStatus.completed, GameStatus.cancelled):
+                return CommandResult.fail("GAME_CLOSED", "This game is already closed.")
 
             user = await uow.users.get_by_telegram_id(cmd.user_id)
             if user is None:

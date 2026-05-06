@@ -72,7 +72,10 @@ async def _handle_join(query: Any, context: ContextTypes.DEFAULT_TYPE, telegram_
         JoinGameCmd(game_uuid=game_uuid, user_id=telegram_id, chat_id=query.from_user.id)
     )
     if not result.success:
-        await query.answer(result.error_message or "Could not join", show_alert=True)
+        msg = result.error_message or "Could not join"
+        if result.error_code == "GAME_CLOSED":
+            msg = "Game is already closed, buddy. You can't join."
+        await query.answer(msg, show_alert=True)
         return
     await _refresh_announcement(query, context, game_uuid)
 
