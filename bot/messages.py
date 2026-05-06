@@ -12,9 +12,13 @@ def escape_md(text: str) -> str:
     return text
 
 
-def format_game_announcement(game: Any, participants: list[Any], amount_per_player: Decimal | None = None) -> str:
+def format_game_announcement(game: Any, participants: list[Any], amount_per_player: Decimal | None = None, has_location_pin: bool = False) -> str:
+    if has_location_pin:
+        location_line = "📍 Location shared above"
+    else:
+        location_line = f"📍 *{escape_md(game.location)}*"
     lines = [
-        f"📍 *{escape_md(game.location)}*",
+        location_line,
         f"🗓 {escape_md(str(game.scheduled_at))}",
     ]
     if game.max_players:
