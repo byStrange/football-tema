@@ -1,0 +1,8 @@
+sqlalchemy[asyncio]
+aiosqlite
+python-telegram-bot
+pydantic
+pydantic-settings
+apscheduler
+pytest
+pytest-asyncio
