@@ -61,11 +61,22 @@ async def newgame_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             "text": update.message.text or "",
         }
     else:
-        context.chat_data["newgame_location"] = {
-            "latitude": None,
-            "longitude": None,
-            "text": update.message.text or "",
-        }
+        # Try to parse raw coordinates from text (e.g. "44.2333, 44.1222")
+        import re
+        match = re.search(r"(-?\d+\.?\d*)\s*[,;]\s*(-?\d+\.?\d*)", update.message.text or "")
+        if match:
+            lat, lon = float(match.group(1)), float(match.group(2))
+            context.chat_data["newgame_location"] = {
+                "latitude": lat,
+                "longitude": lon,
+                "text": update.message.text or "",
+            }
+        else:
+            context.chat_data["newgame_location"] = {
+                "latitude": None,
+                "longitude": None,
+                "text": update.message.text or "",
+            }
     await update.message.reply_text("When is the game? (YYYY-MM-DD HH:MM)")
     return DATETIME
 

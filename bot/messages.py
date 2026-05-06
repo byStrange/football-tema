@@ -5,9 +5,9 @@ from typing import Any
 
 
 def escape_md(text: str) -> str:
-    """Escape markdown v1 special characters."""
-    chars = ["_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"]
-    for ch in chars:
+    """Escape characters that are special in Telegram Markdown v1."""
+    # Telegram Markdown v1 treats only these as special: * _ ` and \ itself
+    for ch in ("\\", "`", "*", "_"):
         text = text.replace(ch, f"\\{ch}")
     return text
 
