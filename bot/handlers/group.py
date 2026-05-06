@@ -178,6 +178,30 @@ newgame_conversation = ConversationHandler(
 )
 
 
+async def cmd_games(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List active games in the group."""
+    if not update.message:
+        return
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    if not chat_id:
+        return
+    from db.unit_of_work import UnitOfWork
+    async with UnitOfWork() as uow:
+        games = await uow.games.list_active_for_group(chat_id)
+    if not games:
+        await update.message.reply_text("No active games in this group.")
+        return
+    lines = ["📋 Active games:"]
+    for g in games:
+        status_icon = "💰" if g.status.value == "payment_open" else "📍"
+        lines.append(
+            f"\n{status_icon} *{g.location}*\n"
+            f"  🗓 {g.scheduled_at.strftime('%Y-%m-%d %H:%M')}\n"
+            f"  🆔 `{g.game_uuid}`"
+        )
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
@@ -375,6 +399,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 group_handlers = [
     newgame_conversation,
+    CommandHandler("games", cmd_games, filters=filters.ChatType.GROUPS),
     CommandHandler("status", cmd_status, filters=filters.ChatType.GROUPS),
     CommandHandler("close", cmd_close, filters=filters.ChatType.GROUPS),
     CommandHandler("cancel", cmd_cancel_game, filters=filters.ChatType.GROUPS),
