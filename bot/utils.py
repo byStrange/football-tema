@@ -18,14 +18,24 @@ async def ensure_user(update: Update) -> User | None:
         return None
     async with UnitOfWork() as uow:
         db_user = await uow.users.get_by_telegram_id(user.id)
-        if db_user is None and chat and chat.type == "private":
-            db_user = await uow.users.create(
-                telegram_id=user.id,
-                chat_id=chat.id,
-                username=user.username,
-                first_name=user.first_name,
-                last_name=user.last_name,
-            )
+        if db_user is None:
+            # Check if a placeholder exists for this username
+            if user.username:
+                placeholder = await uow.users.get_by_username(user.username)
+                if placeholder and placeholder.telegram_id < 0:
+                    placeholder.telegram_id = user.id
+                    placeholder.chat_id = chat.id if chat and chat.type == "private" else user.id
+                    placeholder.first_name = user.first_name
+                    placeholder.last_name = user.last_name
+                    db_user = placeholder
+            if db_user is None and chat and chat.type == "private":
+                db_user = await uow.users.create(
+                    telegram_id=user.id,
+                    chat_id=chat.id,
+                    username=user.username,
+                    first_name=user.first_name,
+                    last_name=user.last_name,
+                )
         return db_user
 
 
