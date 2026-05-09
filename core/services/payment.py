@@ -38,6 +38,7 @@ class PaymentService:
                 await uow.participants.update_amount_due(p.id, amount_per_player)
 
             game.status = GameStatus.payment_open
+            game.cost_per_player = amount_per_player
 
             await self._event_bus.publish(
                 GamePaymentOpened(

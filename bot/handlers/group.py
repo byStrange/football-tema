@@ -16,6 +16,7 @@ from telegram.ext import (
 
 from bot.keyboards import admin_game_controls_keyboard, game_announcement_keyboard, payment_board_keyboard
 from bot.messages import (
+    escape_md,
     format_game_announcement,
     format_dm_payment_prompt,
     format_group_payment_summary,
@@ -28,6 +29,7 @@ from core.services.game import GameService
 from core.services.player import PlayerService
 from core.services.debt import DebtService
 from core.services.payment import PaymentService
+from db.models import PaymentStatus
 from db.unit_of_work import UnitOfWork
 from config import config
 
@@ -451,6 +453,63 @@ async def cmd_add_player(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(f"Error: {result.error_message}")
         return
     await update.message.reply_text(f"Player @{username} added to game {game_uuid} ✅")
+    # Refresh the board/announcement so the new player appears
+    from bot.handlers.callbacks import _refresh_payment_board, _refresh_announcement
+    async with UnitOfWork() as uow:
+        game = await uow.games.get_by_uuid(game_uuid)
+    if game and game.payment_board_message_id:
+        try:
+            await _refresh_payment_board(context, game_uuid)
+        except Exception as exc:
+            logger.debug("Could not refresh payment board after add: %s", exc)
+    if game and game.announcement_message_id:
+        try:
+            await _refresh_announcement(None, context, game_uuid)
+        except Exception as exc:
+            logger.debug("Could not refresh announcement after add: %s", exc)
+
+
+async def cmd_list_players(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List all players in a game with their payment status."""
+    if not update.message or not update.effective_user:
+        return
+    args = context.args
+    group_chat_id = update.effective_chat.id if update.effective_chat else None
+    if args:
+        game_uuid = args[0]
+    else:
+        async with UnitOfWork() as uow:
+            active_games = await uow.games.list_active_for_group(group_chat_id)
+        if len(active_games) == 0:
+            await update.message.reply_text("No active game found in this group.")
+            return
+        if len(active_games) > 1:
+            await update.message.reply_text("Multiple active games. Use: /listplayers <game_uuid>")
+            return
+        game_uuid = active_games[0].game_uuid
+
+    async with UnitOfWork() as uow:
+        game = await uow.games.get_by_uuid(game_uuid)
+        if game is None:
+            await update.message.reply_text("Game not found.")
+            return
+        participants = await uow.participants.list_for_game(game.id)
+
+    lines = [f"👥 Players for *{escape_md(game.location)}* (`{game_uuid}`):"]
+    for p in participants:
+        user = getattr(p, "user", None)
+        name = escape_md(user.first_name or user.username or "Player") if user else "Player"
+        status = getattr(p, "payment_status", None)
+        suffix = " (manual)" if getattr(p, "is_manual_add", False) else ""
+        if status == PaymentStatus.paid:
+            lines.append(f"✅ {name}{suffix}")
+        elif status == PaymentStatus.pending_confirmation:
+            lines.append(f"⏳ {name}{suffix}")
+        elif status == PaymentStatus.waiting_for_cheque:
+            lines.append(f"📎 {name}{suffix}")
+        else:
+            lines.append(f"❌ {name}{suffix}")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
 async def cmd_mark_paid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -523,6 +582,7 @@ group_handlers = [
     CommandHandler("pay", cmd_trigger_payment, filters=filters.ChatType.GROUPS),
     CommandHandler("addplayer", cmd_add_player, filters=filters.ChatType.GROUPS),
     CommandHandler("markpaid", cmd_mark_paid, filters=filters.ChatType.GROUPS),
+    CommandHandler("listplayers", cmd_list_players, filters=filters.ChatType.GROUPS),
     MessageHandler(filters.PHOTO & filters.ChatType.GROUPS, handle_photo),
     MessageHandler(filters.Document.IMAGE & filters.ChatType.GROUPS, handle_photo),
 ]

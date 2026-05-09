@@ -4,7 +4,7 @@ from core.commands import AddPlayerCmd, JoinGameCmd, LeaveGameCmd, RemovePlayerC
 from core.events import EventBus, PlayerJoined, PlayerLeft
 from core.exceptions import GameFull, GameNotFound, NotAuthorized, PlayerNotFound
 from core.results import CommandResult
-from db.models import GameStatus, Participant, PaymentStatus
+from db.models import GameStatus, PaymentStatus, User
 from db.unit_of_work import UnitOfWork
 
 
@@ -90,8 +90,14 @@ class PlayerService:
             elif cmd.target_username:
                 user = await uow.users.get_by_username(cmd.target_username)
                 if user is None:
-                    # Create a placeholder user with no telegram_id (will be resolved later if they join)
-                    user = await uow.users.create(telegram_id=0, chat_id=0, username=cmd.target_username)
+                    # Generate a unique negative placeholder telegram_id
+                    from sqlalchemy import select
+                    result = await uow.session.execute(
+                        select(User.telegram_id).where(User.telegram_id < 0).order_by(User.telegram_id)
+                    )
+                    min_id = result.scalar()
+                    placeholder_id = (min_id or 0) - 1
+                    user = await uow.users.create(telegram_id=placeholder_id, chat_id=0, username=cmd.target_username)
             else:
                 return CommandResult.fail("MISSING_TARGET", "Provide target_telegram_id or target_username.")
 
@@ -101,6 +107,9 @@ class PlayerService:
                 payment_status=PaymentStatus.not_paid,
                 is_manual_add=True,
             )
+            # If payment phase is already open, set the amount due for this new player
+            if game.status == GameStatus.payment_open and game.cost_per_player is not None:
+                await uow.participants.update_amount_due(participant.id, game.cost_per_player)
             return CommandResult.ok(participant)
 
     async def remove_manually(self, cmd: RemovePlayerCmd) -> CommandResult[None]:

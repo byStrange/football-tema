@@ -87,8 +87,14 @@ class NotificationService:
             user = await uow.users.get_by_id(event.user_id)
         if not user:
             return
+        # Skip placeholder/manual users who have no real chat to DM
+        if user.chat_id == 0 or user.telegram_id < 0:
+            return
         text = f"Your payment of {event.amount} was confirmed."
-        await self._message_sender.send_message(user.chat_id or user.telegram_id, text)
+        try:
+            await self._message_sender.send_message(user.chat_id or user.telegram_id, text)
+        except Exception:
+            pass
 
     async def on_payment_rejected(self, event: PaymentRejected) -> None:
         if not self._message_sender:

@@ -1,3 +1,8 @@
+import os
+
+# CRITICAL: Override DB URL BEFORE any app imports so tests use a separate DB.
+os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./football_test.db"
+
 import asyncio
 from decimal import Decimal
 from datetime import datetime, timedelta
@@ -182,6 +187,11 @@ async def main():
         await test_game_full(event_bus)
     finally:
         await teardown_db()
+        # Cleanup test database file after tests
+        try:
+            os.remove("football_test.db")
+        except FileNotFoundError:
+            pass
     print("\nALL TESTS PASSED")
 
 

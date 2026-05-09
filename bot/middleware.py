@@ -24,9 +24,12 @@ async def user_registration_middleware(update: Update, context: Any) -> None:
     async with UnitOfWork() as uow:
         db_user = await uow.users.get_by_telegram_id(user.id)
         if db_user is None:
+            # For private chats, chat.id == user.id. For groups, we still want
+            # the user's personal DM chat id (which is their telegram id).
+            chat_id = chat.id if chat and chat.type == "private" else user.id
             db_user = await uow.users.create(
                 telegram_id=user.id,
-                chat_id=chat.id if chat else user.id,
+                chat_id=chat_id,
                 username=user.username,
                 first_name=user.first_name,
                 last_name=user.last_name,
